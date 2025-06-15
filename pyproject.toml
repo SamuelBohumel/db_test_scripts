@@ -5,6 +5,8 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "dotenv>=0.9.9",
+    "faker>=37.4.0",
     "loguru>=0.7.3",
     "psycopg2>=2.9.10",
 ]
