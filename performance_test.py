@@ -9,7 +9,7 @@ import pandas as pd
 
 load_dotenv()
 
-NUM_RECORDS = 100_000
+NUM_RECORDS = 1_000_000
 
 def create_sample_table(conn):
     cur = conn.cursor()
@@ -59,7 +59,7 @@ def fill_people_table(conn, file_name):
 
 
 def query_performance_test(conn, file_name):
-    query_count = 1000
+    query_count = 10_000
     with conn.cursor() as cur:
         df = pd.read_csv(file_name)
         cities = df['city'][:query_count]
