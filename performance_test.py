@@ -10,6 +10,7 @@ import pandas as pd
 load_dotenv()
 
 NUM_RECORDS = 1_000_000
+query_count = 10_000
 
 def create_sample_table(conn):
     cur = conn.cursor()
@@ -30,39 +31,82 @@ def create_sample_table(conn):
     logger.info("Table 'people' created.")
 
 
-def fill_people_table(conn, file_name):
+def create_sample_dataset(file_name):
+    faker = Faker()
+    data = []
+    for _ in range(NUM_RECORDS):
+        name = faker.name()
+        age = random.randint(18, 90)
+        city = faker.city()
+        email = faker.email()
+        is_active = random.choice([True, False])
+        data.append((name, age, city, email, is_active))
+
+    # Create DataFrame
+    df = pd.DataFrame(data, columns=["name", "age", "city", "email", "is_active"])
+
+    # Save DataFrame to CSV file
+    df.to_csv(file_name, index=False)
+
+
+def fill_people_table_copy(conn, file_name):
+    start = time.time()
+
     with conn.cursor() as cur:
-        start = time.time()
-        faker = Faker()
-
-        data = []
-        # Insert random data
-        for _ in range(NUM_RECORDS):
-            name = faker.name()
-            age = random.randint(18, 90)
-            city = faker.city()
-            email = faker.email()
-            is_active = random.choice([True, False])
-
-            data.append((name, age, city, email, is_active))
-            cur.execute(
-                "INSERT INTO people (name, age, city, email, is_active) VALUES (%s, %s, %s, %s, %s)",
-                (name, age, city, email, is_active)
+        with open(file_name, 'r', encoding='utf-8') as f:
+            next(f)  # Skip header line
+            cur.copy_expert(
+                "COPY people(name, age, city, email, is_active) FROM STDIN WITH CSV",f
             )
 
+    conn.commit()
+    end = time.time()
+    logger.info(f"Inserted records from {file_name} using COPY in {end - start:.2f} seconds.")
+
+
+def fill_people_table_inserts(conn, file_name):
+    start = time.time()
+
+    with conn.cursor() as cur:
+        with open(file_name, 'r', encoding='utf-8') as f:
+            reader = csv.reader(f)
+            headers = next(reader)  # Skip header row
+
+            for row in reader:
+                name, age, city, email, is_active = row
+                cur.execute(
+                    """
+                    INSERT INTO people (name, age, city, email, is_active)
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (name, int(age), city, email, is_active.lower() == 'true')
+                )
+
+    conn.commit()
+    end = time.time()
+    logger.info(f"Inserted records from {file_name} using individual INSERTs in {end - start:.2f} seconds.")
+
+
+def create_index(conn):
+    with conn.cursor() as cur:
+        # Create index on city column
+        logger.info("Creating index on 'city' column...")
+        cur.execute("CREATE INDEX idx_city ON people(city)")
         conn.commit()
-        end = time.time()
-        logger.info(f"Inserted {NUM_RECORDS} records in {end - start:.2f} seconds.")
-        # Create DataFrame and save to CSV
-        df = pd.DataFrame(data, columns=["name", "age", "city", "email", "is_active"])
-        df.to_csv("people_data.csv", index=False)
+
+
+def delete_index(conn):
+    with conn.cursor() as cur:
+        # Create index on city column
+        logger.info("Creating index on 'city' column...")
+        cur.execute("DROP INDEX idx_city;")
+        conn.commit()
 
 
 def query_performance_test(conn, file_name):
-    query_count = 10_000
     with conn.cursor() as cur:
         df = pd.read_csv(file_name)
-        cities = df['city'][:query_count]
+        cities = df['city'].sample(n=query_count, random_state=42).tolist()
 
         # Run 100 queries with random cities (pre-index)
         logger.info(f"Running {query_count} SELECT queries without index...")
@@ -71,22 +115,9 @@ def query_performance_test(conn, file_name):
             cur.execute("SELECT * FROM people WHERE city = %s", (city,))
             cur.fetchall()
         end = time.time()
-        logger.info(f"Average query time (no index): {(end - start) / query_count:.5f} seconds")
-
-        # Create index on city column
-        logger.info("Creating index on 'city' column...")
-        cur.execute("CREATE INDEX idx_city ON people(city)")
-        conn.commit()
-
-        # Run 100 queries with the same cities (post-index)
-        logger.info(f"Running {query_count} SELECT queries with index...")
-        start = time.time()
-        for city in cities:
-            cur.execute("SELECT * FROM people WHERE city = %s", (city,))
-            cur.fetchall()
-        end = time.time()
-        logger.info(f"Average query time (with index): {(end - start) / query_count:.5f} seconds")
-        cur.execute("DROP INDEX idx_city;")
+        duration = end - start
+        logger.info(f"Total time: {(duration):.5f} seconds")
+        return duration
 
 
 def main():
@@ -102,9 +133,10 @@ def main():
             port=os.getenv("DB_PORT")
         ) as conn:
 
-        create_sample_table(conn)
-        fill_people_table(conn, file_name)
-        query_performance_test(conn, file_name)
+        # create_sample_table(conn)
+        # fill_people_table_copy(conn, file_name)
+        select_time = query_performance_test(conn, file_name)
+        logger.info(f"Select test: {select_time:.5f} seconds, average time per query: {(select_time / query_count):.5f} seconds")
 
 
 
